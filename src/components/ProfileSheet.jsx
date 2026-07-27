@@ -50,7 +50,7 @@ export default function ProfileSheet({ profile, onClose, onSaved }) {
         ref={fileRef}
         type="file"
         accept="image/*"
-        hidden
+        className="file-input"
         onChange={(e) => e.target.files?.[0] && setCropFile(e.target.files[0])}
       />
 

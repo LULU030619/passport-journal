@@ -708,6 +708,23 @@ select {
   background: var(--ink);
 }
 
+/*
+ * 文件选择框不能用 display:none 藏起来——
+ * iOS Safari 对完全隐藏的 input 会拒绝弹出相册选择器。
+ * 改成挪出可视区但依然存在于布局中。
+ */
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 /* ---------- 裁剪器 ---------- */
 
 .cropper {

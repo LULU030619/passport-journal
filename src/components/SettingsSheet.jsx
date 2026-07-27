@@ -44,7 +44,7 @@ export default function SettingsSheet({ onClose, onImported }) {
           ref={fileRef}
           type="file"
           accept="application/json"
-          hidden
+          className="file-input"
           onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])}
         />
       </div>

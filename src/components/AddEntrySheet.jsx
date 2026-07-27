@@ -79,7 +79,7 @@ export default function AddEntrySheet({ place, categories, categoryKey, onClose,
           ref={inputRef}
           type="file"
           accept="image/*"
-          hidden
+          className="file-input"
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) {

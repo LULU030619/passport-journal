@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { cropToSquare, fileToImage } from "../lib/image";
+import { cropToSquare, prepareImage } from "../lib/image";
 
 /**
  * 方形裁剪：拖动取景，滑杆缩放。
@@ -17,13 +17,24 @@ export default function PhotoCropper({ file, onDone, onCancel }) {
 
   useEffect(() => {
     let revoke;
-    fileToImage(file)
+    let alive = true;
+    setError("");
+    setImg(null);
+    // 大图解码要花一两秒，手机上尤其明显，不给反馈会以为卡死了
+    prepareImage(file)
       .then((r) => {
+        if (!alive) {
+          r.revoke();
+          return;
+        }
         revoke = r.revoke;
         setImg(r.img);
       })
-      .catch((e) => setError(e.message));
-    return () => revoke?.();
+      .catch((e) => alive && setError(e.message));
+    return () => {
+      alive = false;
+      revoke?.();
+    };
   }, [file]);
 
   useEffect(() => {
@@ -46,7 +57,13 @@ export default function PhotoCropper({ file, onDone, onCancel }) {
     );
   }
 
-  if (!img) return <div className="empty">正在打开照片…</div>;
+  if (!img)
+    return (
+      <div className="empty">
+        <span className="spin" style={{ display: "inline-block" }} />
+        <div style={{ marginTop: 10 }}>正在处理照片…</div>
+      </div>
+    );
 
   const short = Math.min(img.naturalWidth, img.naturalHeight);
   const ratio = (boxW * scale) / short; // 自然像素 → 屏幕像素
