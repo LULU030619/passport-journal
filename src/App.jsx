@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 
 import { db, getProfile, listPlaces, deletePlace, deleteCategory, reorderEntries } from "./db";
-import { seedIfEmpty } from "./seed";
+import { seedCore, hydratePhotos } from "./seed";
 
 const bySort = (a, b) =>
   (a.sort ?? a.createdAt) - (b.sort ?? b.createdAt) || a.createdAt - b.createdAt;
@@ -539,9 +539,26 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [pendingJump, setPendingJump] = useState(null);
   const [collectionTab, setCollectionTab] = useState(null);
+  const [photoProgress, setPhotoProgress] = useState(null);
 
   useEffect(() => {
-    seedIfEmpty().finally(() => setBooted(true));
+    let alive = true;
+    (async () => {
+      // 第一段：写文字元数据，很快，护照立刻能翻
+      const { manifest } = await seedCore();
+      if (!alive) return;
+      setBooted(true);
+      // 第二段：照片在后台补，不挡首屏
+      if (manifest) {
+        setPhotoProgress({ done: 0, total: 1 });
+        hydratePhotos(manifest, (done, total) => {
+          if (alive) setPhotoProgress({ done, total });
+        }).finally(() => alive && setPhotoProgress(null));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const profile = useLiveQuery(() => getProfile(), [], null);
@@ -605,8 +622,23 @@ export default function App() {
     return (
       <div className="book">
         <div className="book__inner">
-          <div className="empty" style={{ margin: 40, border: 0 }}>
-            正在翻开…
+          <div className="booting">
+            <svg className="booting__crest" viewBox="0 0 100 100" aria-hidden="true">
+              <g fill="none" stroke="currentColor" strokeWidth="1.4">
+                <circle cx="50" cy="50" r="30" />
+                <ellipse cx="50" cy="50" rx="13" ry="30" />
+                <path d="M20 50h60M25 34h50M25 66h50" />
+              </g>
+              <path
+                d="M50 12 L53 20 L61 20 L55 25 L57 33 L50 28 L43 33 L45 25 L39 20 L47 20 Z"
+                fill="currentColor"
+                opacity="0.9"
+              />
+            </svg>
+            <p className="booting__title">旅行手帐</p>
+            <span className="booting__dots" aria-label="加载中">
+              <i /><i /><i />
+            </span>
           </div>
         </div>
       </div>
@@ -645,9 +677,17 @@ export default function App() {
 
   const current = pages[index];
 
+  const photoPct =
+    photoProgress && photoProgress.total > 0
+      ? Math.round((photoProgress.done / photoProgress.total) * 100)
+      : null;
+
   return (
     <div className="book">
       <div className="book__inner">
+        {photoPct !== null && photoPct < 100 && (
+          <div className="photo-loading" style={{ width: `${photoPct}%` }} />
+        )}
         {!opened && (
           <Cover onOpen={openCover} opening={opening} count={places.length} />
         )}

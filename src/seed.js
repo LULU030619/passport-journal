@@ -1,17 +1,22 @@
 import { db, ensureCategories, saveProfile } from "./db";
 
 /**
- * 首次打开时载入的示例内容。
+ * 首次打开时载入的示例内容（作者真实旅行记录）。
  *
- * 内容来自作者真实的旅行记录，导出后拆成 public/seed/：
- *   - manifest.json 是元数据（地点、记录、人物，照片字段存的是文件路径）
- *   - 照片是一张张独立的 jpg，按需 fetch，不一次性塞进代码
- * 这样首屏不用背 30MB 的 base64，翻到哪一页才拉那几张图。
+ * 分两段加载，避免首屏干等：
+ *   第一段 seedCore —— 写入地点/人物/资料/记录的「文字」部分（含照片文件路径），
+ *                       很快，护照结构立刻能翻。
+ *   第二段 hydratePhotos —— 在后台把照片一张张 fetch 成 Blob 塞回去，
+ *                       翻到哪页那几张自然就显示了（useLiveQuery 会自动刷新）。
  */
+
+function base(path) {
+  return import.meta.env.BASE_URL + path;
+}
 
 async function fetchBlob(path) {
   try {
-    const res = await fetch(import.meta.env.BASE_URL + path);
+    const res = await fetch(base(path));
     if (!res.ok) return null;
     return await res.blob();
   } catch {
@@ -19,58 +24,86 @@ async function fetchBlob(path) {
   }
 }
 
-export async function seedIfEmpty() {
+/** 第一段：只写文字元数据，秒级完成。返回 manifest 供第二段用。 */
+export async function seedCore() {
   await ensureCategories();
   const n = await db.places.count();
-  if (n > 0) return false;
+  if (n > 0) return { seeded: false };
 
   let manifest;
   try {
-    const res = await fetch(import.meta.env.BASE_URL + "seed/manifest.json");
-    if (!res.ok) return false;
+    const res = await fetch(base("seed/manifest.json"));
+    if (!res.ok) return { seeded: false };
     manifest = await res.json();
   } catch {
-    return false;
+    return { seeded: false };
   }
 
-  // 分类：用备份里的（含自建的「动物」「事件」），覆盖默认三类
   if (manifest.categories?.length) {
     await db.categories.clear();
     await db.categories.bulkAdd(manifest.categories);
   }
 
-  // 资料页
-  const prof = { ...manifest.profile };
-  prof.portrait = prof.portrait ? await fetchBlob(prof.portrait) : null;
-  await saveProfile(prof);
-
-  // 地点
+  // 资料页：照片路径先留着，第二段再换成 Blob
+  await saveProfile({ ...manifest.profile, portrait: null });
   await db.places.bulkAdd(manifest.places);
-
-  // 人物头像
-  const persons = await Promise.all(
-    (manifest.persons || []).map(async (p) => ({
-      ...p,
-      avatar: p.avatar ? await fetchBlob(p.avatar) : null,
-    }))
+  await db.persons.bulkAdd(
+    (manifest.persons || []).map((p) => ({ ...p, avatar: null }))
   );
-  await db.persons.bulkAdd(persons);
+  await db.entries.bulkAdd(
+    (manifest.entries || []).map((e) => ({ ...e, photo: null }))
+  );
 
-  // 记录照片——数量多，分批拉，避免一次性几百个并发请求
-  const entries = manifest.entries || [];
-  const out = [];
-  const BATCH = 12;
-  for (let i = 0; i < entries.length; i += BATCH) {
-    const chunk = entries.slice(i, i + BATCH);
-    const done = await Promise.all(
-      chunk.map(async (e) => ({
-        ...e,
-        photo: e.photo ? await fetchBlob(e.photo) : null,
-      }))
-    );
-    out.push(...done);
+  return { seeded: true, manifest };
+}
+
+/** 第二段：后台把照片补上。分批，避免几百个并发请求。 */
+export async function hydratePhotos(manifest, onProgress) {
+  if (!manifest) return;
+
+  const jobs = [];
+  if (manifest.profile?.portrait) {
+    jobs.push(async () => {
+      const blob = await fetchBlob(manifest.profile.portrait);
+      if (blob) {
+        const prof = await db.meta.get("profile");
+        await saveProfile({ ...(prof?.value || {}), portrait: blob });
+      }
+    });
   }
-  await db.entries.bulkAdd(out);
+  for (const p of manifest.persons || []) {
+    if (p.avatar)
+      jobs.push(async () => {
+        const blob = await fetchBlob(p.avatar);
+        if (blob) await db.persons.update(p.id, { avatar: blob });
+      });
+  }
+  for (const e of manifest.entries || []) {
+    if (e.photo)
+      jobs.push(async () => {
+        const blob = await fetchBlob(e.photo);
+        if (blob) await db.entries.update(e.id, { photo: blob });
+      });
+  }
 
-  return true;
+  const total = jobs.length;
+  let done = 0;
+  const BATCH = 10;
+  for (let i = 0; i < jobs.length; i += BATCH) {
+    await Promise.all(
+      jobs.slice(i, i + BATCH).map((j) =>
+        j().then(() => {
+          done++;
+          onProgress?.(done, total);
+        })
+      )
+    );
+  }
+}
+
+/** 兼容旧调用：一次性全做完（现在 App 不用它了，保留以防万一）。 */
+export async function seedIfEmpty() {
+  const { seeded, manifest } = await seedCore();
+  if (seeded) await hydratePhotos(manifest);
+  return seeded;
 }
