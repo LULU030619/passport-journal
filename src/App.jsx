@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 
-import { db, getProfile, listPlaces, deletePlace, deleteCategory } from "./db";
+import { db, getProfile, listPlaces, deletePlace, deleteCategory, reorderEntries } from "./db";
 import { seedIfEmpty } from "./seed";
+
+const bySort = (a, b) =>
+  (a.sort ?? a.createdAt) - (b.sort ?? b.createdAt) || a.createdAt - b.createdAt;
 
 import Pager from "./components/Pager";
 import Stamp from "./components/Stamp";
 import Photo from "./components/Photo";
+import EntryGrid from "./components/EntryGrid";
 import MapPage from "./components/MapPage";
 import AddPlaceSheet from "./components/AddPlaceSheet";
 import AddEntrySheet from "./components/AddEntrySheet";
@@ -282,7 +286,7 @@ function ContentsPage({
 /* 地点页                                                              */
 /* ================================================================== */
 
-function PlacePage({ place, entries, categories, onAdd, onOpenEntry, onDelete, onAddCategory }) {
+function PlacePage({ place, entries, categories, onAdd, onOpenEntry, onDelete, onAddCategory, onReorder }) {
   const [tab, setTab] = useState(categories[0]?.key || "person");
 
   // 分类被删掉之后，当前标签可能指向一个不存在的库
@@ -292,7 +296,7 @@ function PlacePage({ place, entries, categories, onAdd, onOpenEntry, onDelete, o
     }
   }, [categories, tab]);
   const mine = entries.filter((e) => e.placeId === place.id);
-  const shown = mine.filter((e) => e.categoryKey === tab);
+  const shown = mine.filter((e) => e.categoryKey === tab).sort(bySort);
   const [confirming, setConfirming] = useState(false);
 
   return (
@@ -341,20 +345,12 @@ function PlacePage({ place, entries, categories, onAdd, onOpenEntry, onDelete, o
             记下在这里遇到的第一样东西。
           </div>
         ) : (
-          <div className="grid">
-            {shown.map((e) => (
-              <button key={e.id} className="card" onClick={() => onOpenEntry(e)}>
-                <Photo
-                  blob={e.photo}
-                  className="card__img"
-                  alt={e.name}
-                  fallback={<div className="card__img" />}
-                />
-                <p className="card__name">{e.name || "—"}</p>
-                {e.note && <p className="card__note">{e.note}</p>}
-              </button>
-            ))}
-          </div>
+          <EntryGrid
+            entries={shown}
+            onOpen={onOpenEntry}
+            onReorder={onReorder}
+            subtitle={(e) => e.note}
+          />
         )}
 
         <div style={{ marginTop: 22 }}>
@@ -401,9 +397,10 @@ function CollectionsPage({
   onOpenPerson,
   onAddCategory,
   onDeleteCategory,
+  onReorder,
 }) {
   const setTab = onTabChange;
-  const shown = entries.filter((e) => e.categoryKey === tab);
+  const shown = entries.filter((e) => e.categoryKey === tab).sort(bySort);
   const currentCat = categories.find((c) => c.key === tab);
   const placeName = (id) => places.find((p) => p.id === id)?.name || "";
 
@@ -491,20 +488,12 @@ function CollectionsPage({
         )}
 
         {tab !== "person" && shown.length > 0 && (
-          <div className="grid">
-            {shown.map((e) => (
-              <button key={e.id} className="card" onClick={() => onOpenEntry(e)}>
-                <Photo
-                  blob={e.photo}
-                  className="card__img"
-                  alt={e.name}
-                  fallback={<div className="card__img" />}
-                />
-                <p className="card__name">{e.name || "—"}</p>
-                <p className="card__note">{placeName(e.placeId)}</p>
-              </button>
-            ))}
-          </div>
+          <EntryGrid
+            entries={shown}
+            onOpen={onOpenEntry}
+            onReorder={onReorder}
+            subtitle={(e) => placeName(e.placeId)}
+          />
         )}
       </div>
     </div>
@@ -644,6 +633,10 @@ export default function App() {
     }
   };
 
+  const reorder = async (ids) => {
+    await reorderEntries(ids);
+  };
+
   const removePlace = async (id) => {
     await deletePlace(id);
     setIndex(1);
@@ -699,6 +692,7 @@ export default function App() {
                   onOpenPerson={(id) => setSheet({ type: "person", personId: id })}
                   onAddCategory={() => setSheet({ type: "addCategory" })}
                   onDeleteCategory={removeCategory}
+                  onReorder={reorder}
                 />
               );
             if (p.key === "map")
@@ -715,6 +709,7 @@ export default function App() {
                 onOpenEntry={(e) => setSheet({ type: "entry", entry: e })}
                 onDelete={removePlace}
                 onAddCategory={() => setSheet({ type: "addCategory" })}
+                onReorder={reorder}
               />
             );
           })}
@@ -730,8 +725,15 @@ export default function App() {
             >
               ‹
             </button>
+            <button
+              className="chrome__home"
+              onClick={() => setIndex(1)}
+              aria-label="回到目录"
+            >
+              目录
+            </button>
             <span className="chrome__label">
-              {current?.label} · {index + 1} / {pages.length}
+              {index + 1} / {pages.length}
             </span>
             <button
               className="chrome__arrow"

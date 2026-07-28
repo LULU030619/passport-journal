@@ -112,6 +112,7 @@ export async function addEntry({
     note: (note || "").trim(),
     date: date || "",
     personId: personId || null,
+    sort: Date.now(), // 新条目排到末尾；重排后会被写成 0,1,2…
     createdAt: Date.now(),
   };
   await db.entries.add(entry);
@@ -120,6 +121,13 @@ export async function addEntry({
 
 export async function updateEntry(id, patch) {
   await db.entries.update(id, patch);
+}
+
+/** 保存一批条目的新顺序。传入的是已经排好序的 id 数组。 */
+export async function reorderEntries(ids) {
+  await db.transaction("rw", db.entries, async () => {
+    await Promise.all(ids.map((id, i) => db.entries.update(id, { sort: i })));
+  });
 }
 
 export async function deleteEntry(id) {
